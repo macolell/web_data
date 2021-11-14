@@ -1,0 +1,137 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+web_data_main = pd.read_excel('/Users/michaelcolellajensen/Desktop/Data Sets/Web Data.xlsx', 0)
+print(web_data_main.head(1))
+print(web_data_main.shape)
+print(web_data_main.info())
+
+web_data_main.replace(np.nan, 0, inplace=True)
+web_data_main=web_data_main.replace('\(','',regex=True)
+web_data_main=web_data_main.replace('\)','',regex=True)
+web_data_main=web_data_main.replace(' ','',regex=True)
+web_data_main['is_google'] = np.where(web_data_main.source == 'google', 1, 0)
+web_data_main['is_bing'] = np.where(web_data_main.source == 'bing', 1, 0)
+web_data_main['is_yahoo'] = np.where(web_data_main.source == 'yahoo', 1, 0)
+web_data_main['is_direct'] = np.where(web_data_main.source == 'direct', 1, 0)
+web_data_main['is_rambler'] = np.where(web_data_main.source == 'nova.rambler.ru', 1, 0)
+web_data_main['is_referral'] = np.where(web_data_main.medium == 'referral', 1, 0)
+
+x=web_data_main[['newVisits', 'pageviews', 'timeOnSite', 'visits', 'is_google',
+                 'is_direct', 'is_referral', ' PVs Per Visit', ]]
+y= web_data_main['transactions']
+
+baseline = 1- sum(y)/len(y)
+
+print(baseline)
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import roc_curve
+from sklearn.metrics import roc_auc_score
+
+logreg = LogisticRegression(solver='lbfgs', max_iter=1000)
+x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.3, random_state=123,  stratify = y)
+
+logreg.fit(x_train, y_train)
+logreg_predictions = logreg.predict(x_test)
+
+from sklearn import svm
+from sklearn.feature_selection import SelectKBest
+from sklearn.feature_selection import chi2
+
+features = []
+feature_ranking = SelectKBest(chi2, k=5)
+fit= feature_ranking.fit(x_train, y_train)
+
+for i, (score, feaeture) in enumerate(zip(feature_ranking.scores_, x_train.columns)):
+    features.append((score, features))
+feature_df = pd.DataFrame(features)
+feature_df = feature_df.sort_values(by=[0], ascending = False)
+
+print(feature_df)
+
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import cross_val_score
+print(accuracy_score(y_test, logreg_predictions))
+print(confusion_matrix(y_test, logreg_predictions))
+
+logreg_predictions_prob = logreg.predict_proba(x_test)[:,1]
+fpr, tpr, threshold = roc_curve(y_test, logreg_predictions_prob)
+
+plt.plot([0,1], [0,1])
+plt.plot(fpr, tpr, label = 'Logistic Regression')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('logistic Regression ROC curve')
+plt.show()
+
+print('ROC Score: '+str(roc_auc_score(y_test, logreg_predictions)))
+logreg_cv_scores = cross_val_score(logreg, x, y, cv=5)
+print('Cross Valuation Score: ' + str(np.mean(logreg_cv_scores)))
+
+from sklearn.tree import DecisionTreeClassifier
+dt_model = DecisionTreeClassifier(max_depth = 6,
+                                  min_samples_leaf=0.16,
+                                 criterion = 'entropy')
+
+dt_model.fit(x_train, y_train)
+dt_predictions = dt_model.predict(x_test)
+
+print('Accuracy: '+str(accuracy_score(y_test, dt_predictions)))
+print('ROC Score: '+str(roc_auc_score(y_test, dt_predictions)))
+dt_cv_scores = cross_val_score(dt_model, x, y, cv=5)
+print('Cross Valuation Score: ' + str(np.mean(dt_cv_scores)))
+print(confusion_matrix(y_test, dt_predictions))
+
+import sklearn.tree
+sklearn.tree.plot_tree(dt_model, max_depth=None, feature_names=x_train.columns, 
+                       class_names=None, label='all', filled=True, 
+                       impurity=True, node_ids=False, proportion=True, 
+                       rounded=False, precision=3, ax=None, fontsize=None)
+                       
+from sklearn.neighbors import KNeighborsClassifier
+knn= KNeighborsClassifier(n_neighbors=11) 
+knn.fit(x_train, y_train)
+
+knn_predictions = knn.predict(x_test)
+
+print('Accuracy: '+ str(accuracy_score(y_test, knn_predictions)))
+print('ROC Score: '+str(roc_auc_score(y_test, knn_predictions)))
+print(confusion_matrix(y_test, knn_predictions))
+knn_cv_scores = cross_val_score(knn, x, y, cv=5)
+print('Cross Valuation Score: ' + str(np.mean(knn_cv_scores)))
+
+neighbors = np.arange(1,25)
+train_accuracy = np.empty(len(neighbors))
+test_accuracy = np.empty(len(neighbors))
+
+for n, k in enumerate(neighbors):
+    knn=KNeighborsClassifier(n_neighbors = k)
+    knn.fit(x_test, y_test)
+    train_accuracy[n] = knn.score(x_train, y_train)
+    test_accuracy[n] = knn.score(x_test, y_test)
+
+plt.title('k-NN: Varying Number of Neighbors')
+plt.plot(neighbors, test_accuracy, label = 'Testing Accuracy')
+plt.plot(neighbors, train_accuracy, label = 'Training Accuracy')
+plt.legend()
+plt.xlabel('Number of Neighbors')
+plt.ylabel('Accuracy')
+plt.show()
+
+from sklearn.ensemble import VotingClassifier
+classifiers = [('Logistic Regression', logreg),
+              ('K Nearest Neighbours', knn),
+              ('Classification Tree', dt_model)]
+
+vc_model = VotingClassifier(estimators=classifiers)
+vc_model.fit(x_train, y_train)
+vc_predictions = vc_model.predict(x_test)
+
+print('Accuracy: '+ str(accuracy_score(y_test, vc_predictions)))
+print('ROC Score: '+ str(roc_auc_score(y_test, vc_predictions)))
+print(confusion_matrix(y_test, vc_predictions))
+vc_cv_scores = cross_val_score(vc_model, x, y, cv=10)
+print('Cross Valuation Score: ' + str(np.mean(vc_cv_scores)))
